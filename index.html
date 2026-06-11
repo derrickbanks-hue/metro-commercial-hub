@@ -441,6 +441,10 @@ QUERY: ${query}`);
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]})
     });
     const d = await r.json();
+    if(!r.ok || d.error){
+      console.error('Claude function error:', d);
+      throw new Error('Claude API error: ' + (d.error?.error?.message || d.error?.message || JSON.stringify(d.error) || 'unknown'));
+    }
     return d.content?.map(c=>c.text||'').join('')||'No response';
   }
 
