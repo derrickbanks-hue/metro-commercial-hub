@@ -23,6 +23,15 @@ exports.handler = async function(event) {
 
     const data = await response.json();
 
+    if (!response.ok) {
+      console.error("Anthropic API error:", JSON.stringify(data));
+      return {
+        statusCode: response.status,
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: JSON.stringify({ error: data })
+      };
+    }
+
     return {
       statusCode: 200,
       headers: {
