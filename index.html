@@ -112,9 +112,11 @@ body{font-family:'Poppins',Calibri,sans-serif;background:var(--neutral);color:va
       <p>Commercial Hub</p>
     </div>
   </div>
-  <div id="authArea">
-    <button class="auth-btn" id="trainBtn" style="background:#C18447;margin-right:8px">🎓 Training Mode: OFF</button>
-    <button class="auth-btn" id="signInBtn">Sign in with Microsoft</button>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button class="auth-btn" id="trainBtn" style="background:#C18447;display:none">🎓 Training Mode: OFF</button>
+    <div id="authArea">
+      <button class="auth-btn" id="signInBtn">Sign in with Microsoft</button>
+    </div>
   </div>
 </div>
 
@@ -215,6 +217,11 @@ window.addEventListener('load', function(){
     msalApp.loginRedirect({scopes:SCOPES});
   }
 
+  function signOut(){
+    const account = msalApp.getAllAccounts()[0];
+    msalApp.logoutRedirect({account, postLogoutRedirectUri:REDIRECT});
+  }
+
   function onSignedIn(resp){
     token = resp.accessToken;
     user  = resp.account;
@@ -223,10 +230,12 @@ window.addEventListener('load', function(){
       <div class="user-info">
         <div class="user-avatar">${initials}</div>
         <span>${(user.name||'').split(' ')[0]}</span>
+        <button class="auth-btn" id="logoutBtn" style="background:transparent;border:1px solid rgba(255,255,255,.4);padding:6px 12px">Sign out</button>
       </div>`;
+    document.getElementById('logoutBtn').addEventListener('click', signOut);
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('appScreen').style.display   = 'block';
-    document.getElementById('trainBtn').style.display = 'inline-block';
+    document.getElementById('trainBtn').style.display = 'inline-flex';
     loadHistory();
     loadDocs();
   }
