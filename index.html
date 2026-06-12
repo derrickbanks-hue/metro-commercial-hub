@@ -189,7 +189,7 @@ window.addEventListener('load', function(){
     cache:{ cacheLocation:'sessionStorage', storeAuthStateInCookie:true }
   });
 
-  let token = null, user = null, cachedDocs = [], trainingMode = false;
+  let token = null, user = null, cachedDocs = [], trainingMode = false, lastDebug = null;
 
   document.getElementById('trainBtn').addEventListener('click', ()=>{
     trainingMode = !trainingMode;
@@ -307,6 +307,7 @@ window.addEventListener('load', function(){
         ['agentSearch','agentSummary','agentDocs','agentVisual'].forEach(a=>setAgent(a,'done'));
         document.getElementById('loadingBar').style.display = 'none';
         document.getElementById('resultsSection').style.display = 'flex';
+        lastDebug = {verifiedShortCircuit:true};
         const parsed = {
           title: verified.title, type: verified.type, summary: verified.summary,
           steps: verified.steps||[], answer: verified.answer||'', docs: verified.docs||[]
@@ -365,6 +366,8 @@ window.addEventListener('load', function(){
 
       const raw = await callClaude(`You are an operations assistant for Metro Logics, a 3PL company.
 
+CRITICAL RULE: Only use information that is explicitly present in the provided documents/PDFs below. NEVER fabricate, estimate, or guess specific facts such as prices, rates, dates, names, quantities, or procedural details. If the documents do not contain the information needed to answer the query, you MUST respond with type "text" and an answer that clearly states the information could not be found in the available documents, and suggest what type of document might contain it (e.g. "This information was not found in the available SOPs/contracts. It may be located in [type of document], which was not part of this search.").
+
 First, determine if the query requires step-by-step instructions (a procedure/process) or a direct informational answer (facts, lists, explanations, "what/which/where" questions that aren't procedures).
 
 Return ONLY valid JSON (no markdown) with:
@@ -374,10 +377,11 @@ Return ONLY valid JSON (no markdown) with:
 - "steps": array of step strings (ONLY if type is "steps", otherwise empty array)
 - "answer": a clear written response (ONLY if type is "text", otherwise empty string)
 - "docs": array of document names referenced, ordered with the SINGLE BEST/PRIMARY matching document FIRST, followed by any supporting documents
+- "found": boolean — true if the answer was found in the provided documents, false if you could not find it and are returning a "not found" response
 
 ${memory?'PRIOR MEMORY: '+memory+'\n':''}
 ${verified?'NOTE: A previous correction exists for a similar query - title:"'+verified.title+'", notes:"'+(verified.notes||'')+'". Consider this guidance.\n':''}
-${pdfAttachments.length?'NOTE: '+pdfAttachments.length+' PDF document(s) are attached below — read tables, pricing, and all content from them carefully.\n':''}
+${pdfAttachments.length?'NOTE: '+pdfAttachments.length+' PDF document(s) are attached below — read tables, pricing, and all content from them carefully. Do not use information beyond what is in these attachments and the text context.\n':''}
 DOCUMENTS (the first one listed in context, if any, is the primary/best match):
 ${context}
 QUERY: ${query}`, pdfAttachments);
@@ -386,6 +390,13 @@ QUERY: ${query}`, pdfAttachments);
       try{ parsed = JSON.parse(raw.replace(/```json|```/g,'').trim()); }
       catch(e){ parsed = {title:query, type:'text', summary:'', steps:[], answer:raw, docs:[]}; }
       if(!parsed.type) parsed.type = (parsed.steps && parsed.steps.length) ? 'steps' : 'text';
+
+      lastDebug = {
+        foundDocs: foundDocs.map(d=>d.name),
+        pdfAttachments: pdfAttachments.map(p=>p.name),
+        context,
+        rawResponse: raw
+      };
 
       setAgent('agentSummary','done');
       setAgent('agentDocs','active');
@@ -426,9 +437,11 @@ QUERY: ${query}`, pdfAttachments);
 
     const verifiedBadge = isVerified ? `<div style="background:#e8f8ec;border:1px solid #28a745;color:#28a745;border-radius:6px;padding:8px 12px;font-size:11px;font-weight:600;margin-bottom:12px">✅ Verified Answer — confirmed correct by a Metro Logics admin</div>` : '';
 
+    const notFoundBadge = (p.found === false) ? `<div style="background:#fdecea;border:1px solid #c0392b;color:#c0392b;border-radius:6px;padding:8px 12px;font-size:11px;font-weight:600;margin-bottom:12px">⚠️ Not found in available documents — see note below</div>` : '';
+
     const mainCardHTML = isSteps ? `
       <div class="result-card">
-        ${verifiedBadge}
+        ${verifiedBadge}${notFoundBadge}
         <h3><span class="badge">STEP-BY-STEP</span>${p.title||query}</h3>
         ${p.summary?`<p style="font-size:12px;color:#555;margin-bottom:14px;line-height:1.6">${p.summary}</p>`:''}
         <div class="steps-list">${steps.map((s,i)=>`
@@ -439,7 +452,7 @@ QUERY: ${query}`, pdfAttachments);
         </div>
       </div>` : `
       <div class="result-card">
-        ${verifiedBadge}
+        ${verifiedBadge}${notFoundBadge}
         <h3><span class="badge">ANSWER</span>${p.title||query}</h3>
         <p style="font-size:13px;color:#333;line-height:1.7;white-space:pre-line">${p.answer||''}</p>
       </div>`;
@@ -503,9 +516,41 @@ QUERY: ${query}`, pdfAttachments);
   function renderTrainingPanel(query, p, docs, isSteps){
     const qEnc = encodeURIComponent(query);
     const stepsText = (p.steps||[]).join('\n');
+
+    let debugHTML = '';
+    if(lastDebug?.verifiedShortCircuit){
+      debugHTML = `<div style="background:#e8f8ec;border:1px solid #28a745;border-radius:6px;padding:10px 12px;font-size:11px;color:#28a745;margin-bottom:14px">
+        ✅ This answer came from a <strong>Verified Answer</strong> (no AI call made) — edit below to update it.
+      </div>`;
+    } else if(lastDebug){
+      const contextPreview = (lastDebug.context||'').slice(0,3000);
+      debugHTML = `
+      <details style="margin-bottom:14px;border:1px solid #dde3ea;border-radius:6px;padding:10px 12px;background:#fafbfc">
+        <summary style="font-size:12px;font-weight:600;cursor:pointer;color:#002447">🔬 Debug: What the Search/Summary agents actually saw</summary>
+        <div style="margin-top:10px;font-size:11px;color:#444;line-height:1.6">
+          <p><strong>Documents fetched as text:</strong> ${lastDebug.foundDocs.length ? lastDebug.foundDocs.join(', ') : 'none'}</p>
+          <p><strong>PDF attachments sent to Claude:</strong> ${lastDebug.pdfAttachments.length ? lastDebug.pdfAttachments.join(', ') : 'none'}</p>
+          <p style="margin-top:8px"><strong>Text context sent (first 3000 chars):</strong></p>
+          <pre style="white-space:pre-wrap;background:white;border:1px solid #dde3ea;border-radius:4px;padding:8px;font-size:10px;max-height:200px;overflow:auto;font-family:monospace">${contextPreview ? contextPreview.replace(/</g,'&lt;') : '(no text context — answer likely came from PDF attachment(s) above, or built-in fallback)'}</pre>
+          <p style="margin-top:8px"><strong>Raw Claude response:</strong></p>
+          <pre style="white-space:pre-wrap;background:white;border:1px solid #dde3ea;border-radius:4px;padding:8px;font-size:10px;max-height:150px;overflow:auto;font-family:monospace">${(lastDebug.rawResponse||'').replace(/</g,'&lt;')}</pre>
+        </div>
+      </details>
+
+      <div style="margin-bottom:14px">
+        <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">🤔 Ask the agent about this answer (e.g. "Where did $17.50 come from? Is that in the document?")</label>
+        <div style="display:flex;gap:8px">
+          <input id="followUpQ" placeholder="Ask a question about how this answer was generated..." style="flex:1;padding:8px;border:1px solid #dde3ea;border-radius:6px;font-family:'Poppins',sans-serif;font-size:12px">
+          <button onclick="askFollowUp()" style="background:var(--primary);color:white;border:none;padding:8px 16px;border-radius:6px;font-family:'Poppins',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Ask</button>
+        </div>
+        <div id="followUpAnswer" style="margin-top:8px;font-size:12px;color:#333;line-height:1.6"></div>
+      </div>`;
+    }
+
     return `
     <div class="result-card" style="border:2px solid #C18447">
       <h3><span class="badge" style="background:#C18447">🎓 TRAINING MODE</span>Correct This Answer</h3>
+      ${debugHTML}
       <p style="font-size:11px;color:#888;margin-bottom:10px">Edit the fields below to define the correct answer. Saving will create a verified response that's used directly for matching future queries — bypassing AI guesswork.</p>
 
       <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Title</label>
@@ -563,7 +608,38 @@ QUERY: ${query}`, pdfAttachments);
     document.getElementById('feedbackBar').innerHTML = '<p class="feedback-thanks">🙏 Thank you! Your feedback improves future responses.</p>';
   };
 
-  // ── VERIFIED ANSWERS (Training Mode) ─────────────────────────────────────
+  window.askFollowUp = async function(){
+    const q = document.getElementById('followUpQ').value.trim();
+    if(!q || !lastDebug) return;
+    const ansEl = document.getElementById('followUpAnswer');
+    ansEl.innerHTML = '<span style="color:#888">Thinking...</span>';
+    try{
+      // Rebuild PDF attachments for this follow-up from cachedDocs
+      const pdfAtt = [];
+      for(const name of lastDebug.pdfAttachments){
+        const doc = cachedDocs.find(d=>d.name===name);
+        if(doc){
+          const c = await fetchContent(doc);
+          if(c?.type==='pdf') pdfAtt.push({name, base64:c.base64});
+        }
+      }
+      const prompt = `You previously answered a query using the context below. The user wants to verify your reasoning — answer their follow-up question honestly, and if information is NOT present in the provided context/documents, say so explicitly rather than guessing.
+
+ORIGINAL TEXT CONTEXT:
+${lastDebug.context || '(none — see attached PDF(s) if any)'}
+
+YOUR PREVIOUS RAW RESPONSE:
+${lastDebug.rawResponse}
+
+FOLLOW-UP QUESTION: ${q}
+
+Answer in plain text, 2-4 sentences.`;
+      const resp = await callClaude(prompt, pdfAtt);
+      ansEl.innerHTML = `<div style="background:#e8f4fb;border:1px solid #008FD4;border-radius:6px;padding:10px;white-space:pre-line">${resp.replace(/</g,'&lt;')}</div>`;
+    } catch(e){
+      ansEl.innerHTML = `<span style="color:#c0392b">Error: ${e.message}</span>`;
+    }
+  };
   function normalize(q){
     return q.toLowerCase().trim().replace(/[^\w\s]/g,'').replace(/\s+/g,' ');
   }
