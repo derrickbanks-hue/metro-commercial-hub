@@ -325,14 +325,15 @@ window.addEventListener('load', function(){
 
         const rel = scored.filter(s=>s.score>0).map(s=>s.doc);
         const extra = rel.length ? rel : (foundDocs.length?[]:cachedDocs.slice(0,3));
-        foundDocs = [...foundDocs, ...extra].slice(0,5);
+        foundDocs = [...foundDocs, ...extra].slice(0,3);
 
         for(let i=0;i<foundDocs.length;i++){
           const doc = foundDocs[i];
           const txt = await fetchContent(doc);
           if(txt){
             const label = i===0 ? `${doc.name} [PRIMARY MATCH]` : `${doc.name} [supporting]`;
-            context += `\n\n--- ${label} ---\n${txt.slice(0,8000)}`;
+            const limit = i===0 ? 4000 : 1500;
+            context += `\n\n--- ${label} ---\n${txt.slice(0,limit)}`;
           }
         }
       }
