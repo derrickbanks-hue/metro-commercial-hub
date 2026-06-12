@@ -87,14 +87,16 @@ body{font-family:'Poppins',Calibri,sans-serif;background:var(--neutral);color:va
 .spinner{width:20px;height:20px;border:3px solid #dde3ea;border-top-color:var(--secondary);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media print{
-  body *{display:none!important}
-  .visual-card, .visual-card *{display:revert!important}
-  .visual-card{border:2px solid #002447!important;position:absolute;top:0;left:0;width:100%;margin:0}
-  .visual-header{display:flex!important}
-  .visual-body{display:block!important}
-  .visual-steps{display:flex!important}
-  .visual-step{display:flex!important}
-  .visual-footer{display:block!important}
+  body *{visibility:hidden}
+  .visual-card, .visual-card *{visibility:visible}
+  .visual-card{
+    border:2px solid #002447!important;
+    position:absolute;
+    top:0;
+    left:0;
+    width:100%;
+    margin:0;
+  }
   body{background:white}
 }
 @media(max-width:600px){.search-box{flex-direction:column}}
