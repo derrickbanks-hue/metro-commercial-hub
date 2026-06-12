@@ -259,12 +259,29 @@ window.addEventListener('load', function(){
   }
 
   async function fetchContent(doc){
+    const isPdf = doc.name.toLowerCase().endsWith('.pdf');
     try{
       const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${doc.driveId}/items/${doc.id}/content`,
         {headers:{Authorization:`Bearer ${token}`}});
-      if(r.ok) return await r.text();
+      if(!r.ok) return null;
+      if(isPdf){
+        const buf = await r.arrayBuffer();
+        const base64 = arrayBufferToBase64(buf);
+        return {type:'pdf', base64};
+      }
+      return {type:'text', text:await r.text()};
     } catch(e){}
     return null;
+  }
+
+  function arrayBufferToBase64(buffer){
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const chunk = 0x8000;
+    for(let i=0;i<bytes.length;i+=chunk){
+      binary += String.fromCharCode.apply(null, bytes.subarray(i,i+chunk));
+    }
+    return btoa(binary);
   }
 
   // ── QUERY FLOW ────────────────────────────────────────────────────────────
@@ -306,6 +323,7 @@ window.addEventListener('load', function(){
       const memory = await checkMemory(query);
       let context = getBuiltin(query);
       let foundDocs = [];
+      let pdfAttachments = [];
 
       // If this query was previously corrected, prioritize the corrected primary doc
       if(verified?.primary_doc && cachedDocs.length){
@@ -329,11 +347,14 @@ window.addEventListener('load', function(){
 
         for(let i=0;i<foundDocs.length;i++){
           const doc = foundDocs[i];
-          const txt = await fetchContent(doc);
-          if(txt){
-            const label = i===0 ? `${doc.name} [PRIMARY MATCH]` : `${doc.name} [supporting]`;
+          const content = await fetchContent(doc);
+          if(!content) continue;
+          const label = i===0 ? `${doc.name} [PRIMARY MATCH]` : `${doc.name} [supporting]`;
+          if(content.type === 'pdf'){
+            pdfAttachments.push({name:doc.name, label, base64:content.base64});
+          } else {
             const limit = i===0 ? 4000 : 1500;
-            context += `\n\n--- ${label} ---\n${txt.slice(0,limit)}`;
+            context += `\n\n--- ${label} ---\n${content.text.slice(0,limit)}`;
           }
         }
       }
@@ -356,9 +377,10 @@ Return ONLY valid JSON (no markdown) with:
 
 ${memory?'PRIOR MEMORY: '+memory+'\n':''}
 ${verified?'NOTE: A previous correction exists for a similar query - title:"'+verified.title+'", notes:"'+(verified.notes||'')+'". Consider this guidance.\n':''}
+${pdfAttachments.length?'NOTE: '+pdfAttachments.length+' PDF document(s) are attached below — read tables, pricing, and all content from them carefully.\n':''}
 DOCUMENTS (the first one listed in context, if any, is the primary/best match):
 ${context}
-QUERY: ${query}`);
+QUERY: ${query}`, pdfAttachments);
 
       let parsed = {};
       try{ parsed = JSON.parse(raw.replace(/```json|```/g,'').trim()); }
