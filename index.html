@@ -257,11 +257,24 @@ window.addEventListener('load', function(){
 
       if(cachedDocs.length){
         const q = query.toLowerCase();
-        const rel = cachedDocs.filter(d => q.split(' ').some(w => w.length>3 && d.name.toLowerCase().includes(w))).slice(0,5);
-        foundDocs = rel.length ? rel : cachedDocs.slice(0,3);
-        for(const doc of foundDocs){
+        const qWords = q.split(' ').filter(w=>w.length>3);
+        // Score each doc by how many query words appear in its name
+        const scored = cachedDocs.map(d=>{
+          const name = d.name.toLowerCase();
+          const score = qWords.reduce((acc,w)=> acc + (name.includes(w)?1:0), 0);
+          return {doc:d, score};
+        }).sort((a,b)=>b.score-a.score);
+
+        const rel = scored.filter(s=>s.score>0).map(s=>s.doc);
+        foundDocs = rel.length ? rel.slice(0,5) : cachedDocs.slice(0,3);
+
+        for(let i=0;i<foundDocs.length;i++){
+          const doc = foundDocs[i];
           const txt = await fetchContent(doc);
-          if(txt) context += `\n\n--- ${doc.name} ---\n${txt.slice(0,2500)}`;
+          if(txt){
+            const label = i===0 ? `${doc.name} [PRIMARY MATCH]` : `${doc.name} [supporting]`;
+            context += `\n\n--- ${label} ---\n${txt.slice(0,2500)}`;
+          }
         }
       }
 
@@ -270,15 +283,26 @@ window.addEventListener('load', function(){
       setMsg('📝 Summary Agent: Building step-by-step instructions...');
 
       const raw = await callClaude(`You are an operations assistant for Metro Logics, a 3PL company.
-Using the document context, answer the query with clear numbered steps.
-Return ONLY valid JSON (no markdown) with: title, summary, steps (array), docs (array).
+
+First, determine if the query requires step-by-step instructions (a procedure/process) or a direct informational answer (facts, lists, explanations, "what/which/where" questions that aren't procedures).
+
+Return ONLY valid JSON (no markdown) with:
+- "title": short title for the response
+- "type": either "steps" or "text"
+- "summary": 1-2 sentence overview (for type "steps") OR leave empty for type "text"
+- "steps": array of step strings (ONLY if type is "steps", otherwise empty array)
+- "answer": a clear written response (ONLY if type is "text", otherwise empty string)
+- "docs": array of document names referenced, ordered with the SINGLE BEST/PRIMARY matching document FIRST, followed by any supporting documents
+
 ${memory?'PRIOR MEMORY: '+memory+'\n':''}
-DOCUMENTS:\n${context}
+DOCUMENTS (the first one listed in context, if any, is the primary/best match):
+${context}
 QUERY: ${query}`);
 
       let parsed = {};
       try{ parsed = JSON.parse(raw.replace(/```json|```/g,'').trim()); }
-      catch(e){ parsed = {title:query, summary:'', steps:[raw], docs:[]}; }
+      catch(e){ parsed = {title:query, type:'text', summary:'', steps:[], answer:raw, docs:[]}; }
+      if(!parsed.type) parsed.type = (parsed.steps && parsed.steps.length) ? 'steps' : 'text';
 
       setAgent('agentSummary','done');
       setAgent('agentDocs','active');
@@ -313,10 +337,11 @@ QUERY: ${query}`);
   // ── RENDER ────────────────────────────────────────────────────────────────
   function render(query, p, docs){
     const steps = p.steps||[];
+    const isSteps = p.type === 'steps' && steps.length > 0;
     const today = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
     const qEnc  = encodeURIComponent(query);
 
-    document.getElementById('resultsSection').innerHTML = `
+    const mainCardHTML = isSteps ? `
       <div class="result-card">
         <h3><span class="badge">STEP-BY-STEP</span>${p.title||query}</h3>
         ${p.summary?`<p style="font-size:12px;color:#555;margin-bottom:14px;line-height:1.6">${p.summary}</p>`:''}
@@ -326,35 +351,48 @@ QUERY: ${query}`);
             <div class="step-text">${s}</div>
           </div>`).join('')}
         </div>
-      </div>
+      </div>` : `
+      <div class="result-card">
+        <h3><span class="badge">ANSWER</span>${p.title||query}</h3>
+        <p style="font-size:13px;color:#333;line-height:1.7;white-space:pre-line">${p.answer||''}</p>
+      </div>`;
+
+    const visualBodyHTML = isSteps ? `
+          <div class="visual-steps">${steps.map((s,i)=>`
+            <div class="visual-step">
+              <div class="visual-step-num">${i+1}</div>
+              <div class="visual-step-text">${s}</div>
+            </div>`).join('')}
+          </div>` : `
+          <div class="visual-steps">
+            <div class="visual-step" style="border-left-color:#C18447">
+              <div class="visual-step-text" style="padding-top:0;font-weight:400;white-space:pre-line">${p.answer||''}</div>
+            </div>
+          </div>`;
+
+    document.getElementById('resultsSection').innerHTML = `
+      ${mainCardHTML}
 
       <div class="result-card">
         <h3><span class="badge">DOCUMENTS</span>Referenced Files</h3>
         <div class="doc-tags">${docs.length
-          ? docs.map(d=>`<div class="doc-tag">📄 ${d}</div>`).join('')
+          ? docs.map((d,i)=>`<div class="doc-tag">${i===0?'⭐':'📄'} ${d}${i===0?' <span style="opacity:.6">(primary)</span>':''}</div>`).join('')
           : '<p style="font-size:12px;color:#888">No specific documents identified.</p>'}</div>
       </div>
 
       <div class="result-card">
-        <h3><span class="badge">VISUAL GUIDE</span>Printable Step Card</h3>
+        <h3><span class="badge">VISUAL GUIDE</span>${isSteps?'Printable Step Card':'Printable Reference Card'}</h3>
         <div class="visual-card">
           <div class="visual-header">
             <div class="visual-logo"><span>M</span></div>
             <div><h4>${p.title||query}</h4><p>Metro Logics Commercial Division</p></div>
           </div>
-          <div class="visual-body">
-            <div class="visual-steps">${steps.map((s,i)=>`
-              <div class="visual-step">
-                <div class="visual-step-num">${i+1}</div>
-                <div class="visual-step-text">${s}</div>
-              </div>`).join('')}
-            </div>
-          </div>
+          <div class="visual-body">${visualBodyHTML}</div>
           <div class="visual-footer">Metro Logics, Inc. · 10635 Marina Drive, Olive Branch, MS 38654 · www.metro-logics.com · ${today}</div>
         </div>
         <div class="action-bar">
           <button class="action-btn" onclick="window.print()">🖨️ Print / Save PDF</button>
-          <button class="action-btn" onclick="copySteps()">📋 Copy Steps</button>
+          <button class="action-btn" onclick="copySteps()">📋 Copy ${isSteps?'Steps':'Answer'}</button>
         </div>
       </div>
 
@@ -486,8 +524,15 @@ Sign form with Action Person Signature and Quality Review.`;
   function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
   window.copySteps = function(){
-    const txt = [...document.querySelectorAll('.step-text')].map((s,i)=>`${i+1}. ${s.textContent}`).join('\n');
-    navigator.clipboard.writeText(txt).then(()=>alert('Steps copied!')).catch(()=>alert('Please copy manually.'));
+    const stepEls = document.querySelectorAll('.step-text');
+    let txt;
+    if(stepEls.length){
+      txt = [...stepEls].map((s,i)=>`${i+1}. ${s.textContent}`).join('\n');
+    } else {
+      const ansEl = document.querySelector('.result-card p');
+      txt = ansEl ? ansEl.textContent : '';
+    }
+    navigator.clipboard.writeText(txt).then(()=>alert('Copied!')).catch(()=>alert('Please copy manually.'));
   };
 
   function showError(msg){
