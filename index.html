@@ -273,7 +273,7 @@ window.addEventListener('load', function(){
           const txt = await fetchContent(doc);
           if(txt){
             const label = i===0 ? `${doc.name} [PRIMARY MATCH]` : `${doc.name} [supporting]`;
-            context += `\n\n--- ${label} ---\n${txt.slice(0,2500)}`;
+            context += `\n\n--- ${label} ---\n${txt.slice(0,8000)}`;
           }
         }
       }
